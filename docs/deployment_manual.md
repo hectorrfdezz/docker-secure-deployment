@@ -41,6 +41,13 @@ Once the containers are running you can access the application at
 `https://localhost`.  The first launch may take several seconds while
 the database initialises and the backend performs its healthcheck.
 
+> **Nota sobre los certificados:** Si has ejecutado un hotfix para
+> sustituir las claves TLS, asegúrate de confiar en el nuevo
+> certificado (por ejemplo, importándolo en tu navegador) o elimina el
+> antiguo certificado almacenado en caché.  Los certificados se
+> regeneran mediante el comando `openssl` descrito en el documento de
+> pensamiento crítico.
+
 ### Credentials
 
 - MySQL root password: `example`

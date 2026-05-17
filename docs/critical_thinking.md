@@ -29,12 +29,31 @@ be added in a future commit.
 (`server.key`) into the version control system.  Revealing this file
 compromises the confidentiality of encrypted traffic.
 
-**Response:** This commit introduces a `.gitignore` file that
-excludes build artefacts and adds a commented reminder to ignore
-certificates in a real project.  In a future hotfix we will simulate
-the leak of `server.key`, generate new certificates and revoke the
-compromised key.  The hotfix will also update `.gitignore` to ensure
-keys and other secrets are never committed again.
+**Response:** In this commit we perform the hotfix.  First we
+regenerated a new self‑signed certificate and key using `openssl`
+and replaced the old files in the `certs/` directory.  We then
+updated `.gitignore` to ignore all `*.key` files under `certs/` so that
+private keys are never committed again.  Finally, we documented the
+steps here for incident response:  
+1. Detect the leak (e.g. by code review or security scanning).  
+2. Rotate the certificates by generating a new key and certificate
+   using a secure command such as:
+
+   ```bash
+   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+       -keyout certs/server.key -out certs/server.crt \
+       -subj "/C=ES/ST=Sevilla/L=Sevilla/O=MyCompany/OU=IT/CN=localhost"
+   ```
+
+3. Update your configuration (`nginx.conf`) if necessary to point to
+   the new certificate paths.  
+4. Add the private key to `.gitignore` so it does not get committed
+   again.  
+5. Force rotate any secrets dependent on the leaked key (e.g. by
+   reissuing certificates with a trusted CA in production).  
+6. Commit these changes on a `hotfix/` branch and merge back into
+   `develop` and `main` with a clear commit message describing the
+   incident and resolution.
 
 ## 3. UID/GID Troubleshooting
 The SFTP service must write files into a shared volume that Nginx can
