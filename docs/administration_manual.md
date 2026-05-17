@@ -18,7 +18,8 @@ services:
   Only Nginx can reach the backend and database from outside.
 - **sftp_net**: connects the `sftp` container to the host.  The SFTP
   service does not share a network with the application servers.  It
-  only writes into the shared `static_content` volume.
+  only writes into the shared `static_content` volume, which is
+  mounted at `/home/sftpuser/upload` inside the SFTP container.
 
 This strict segmentation ensures that an attacker cannot bypass Nginx’s
 authentication and reach the backend directly.  In future revisions

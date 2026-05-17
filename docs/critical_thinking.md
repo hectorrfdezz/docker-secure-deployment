@@ -37,13 +37,18 @@ compromised key.  The hotfix will also update `.gitignore` to ensure
 keys and other secrets are never committed again.
 
 ## 3. UID/GID Troubleshooting
-
 The SFTP service must write files into a shared volume that Nginx can
 read without using permissive 777 permissions.  This requires aligning
 the user and group IDs of the SFTP user with the Nginx user inside the
-container.  In upcoming commits we will inspect the `nginx` user’s
-UID/GID, adjust the SFTP command accordingly and provide a log of the
-commands used to verify correct ownership.
+container.  The official `nginx` image uses UID and GID `101` for the
+`nginx` user【368301268539781†L336-L343】, so our `docker-compose.yml` configures
+the SFTP user command as `sftpuser:password:101:101:upload`.  The
+volume is mounted at `/home/sftpuser/upload` to match the `upload`
+directory specified in the user definition.  To verify that the IDs
+match, run `id nginx` inside an `nginx:alpine` container and
+`id sftpuser` inside the SFTP container.  Both should report UID 101
+and GID 101.  If these values differ, adjust the third and fourth
+fields in the SFTP command accordingly.
 
 ## 4. Benchmarking & Tuning
 

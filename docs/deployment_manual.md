@@ -68,5 +68,8 @@ docker-compose down -v
 ## Next steps
 
 This manual will be expanded in future commits to include troubleshooting
-tips, environment variable descriptions, network isolation details and
-instructions on how to upload content via SFTP.
+tips and environment variable descriptions.  To upload content via
+SFTP, connect using an SFTP client to `localhost` port 2222 with the
+credentials provided above (`sftpuser`/`password`).  Any files placed in
+the `upload` directory will appear on the website immediately once
+uploaded.

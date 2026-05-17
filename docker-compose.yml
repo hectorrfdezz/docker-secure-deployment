@@ -152,7 +152,11 @@ services:
     image: atmoz/sftp:latest
     container_name: sftp
     volumes:
-      - static_content:/home/sftp/upload
+      # Mount the shared static volume into the SFTP user's upload directory.
+      # The last path segment (upload) must match the directory specified in
+      # the user definition in the command below.  Without this alignment
+      # Nginx will not see the uploaded files.
+      - static_content:/home/sftpuser/upload
     networks:
       - sftp_net
     ports:
