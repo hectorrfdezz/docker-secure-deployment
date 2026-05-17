@@ -74,7 +74,46 @@ brute‑force attacks.
 
 ## Log Rotation
 
-At present this environment does not enable log rotation.  Future
-commits will add a scheduled `logrotate` configuration or utilise
-Docker’s built‑in logging drivers with size limits to ensure that logs
-do not fill the host filesystem.
+Nginx and the backend will generate access and error logs.  To prevent
+these files from consuming all available disk space you should enable
+log rotation.  There are two common approaches:
+
+1. **Docker logging drivers:** In `docker-compose.yml` you can
+   configure a logging driver with a maximum size and file count.  For
+   example:
+
+   ```yaml
+   services:
+     nginx:
+       logging:
+         driver: json-file
+         options:
+           max-size: "10m"
+           max-file: "3"
+   ```
+
+   This will rotate the container’s JSON log once it reaches 10 MB and
+   keep up to 3 files per container.
+
+2. **logrotate inside the container:** Install `logrotate` in your
+   image and create a cron job to rotate `/var/log/nginx/access.log`
+   and `/var/log/nginx/error.log`.  The configuration might look like:
+
+   ```
+   /var/log/nginx/*.log {
+       daily
+       missingok
+       rotate 7
+       compress
+       delaycompress
+       notifempty
+       create 0640 nginx adm
+   }
+   ```
+
+   This rotates logs daily, keeps seven compressed backups and ensures
+   new files are created with appropriate ownership.
+
+Choose the method that best fits your environment.  The Docker driver
+is simpler and works across platforms, while logrotate gives more
+control over compression and scheduling.

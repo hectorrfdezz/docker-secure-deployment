@@ -10,18 +10,42 @@ mitigated.
 ## 1. The “Bypass” Vulnerability
 
 **Problem:** In the professor’s intentionally flawed architecture, an
-attacker can bypass HTTP Basic Auth by accessing the backend directly
-on port 8080.  This occurs because the backend service is bound to a
-publicly accessible port on the host and shares a network with the
-frontend.
+external attacker could bypass the HTTP Basic Auth applied by Nginx by
+connecting directly to the backend on port 8080.  This was possible
+because the backend exposed its port on the host and shared the same
+Docker network as the frontend.  An attacker could simply browse to
+`http://<server_ip>:8080/api/message` and retrieve data without ever
+touching Nginx.
 
-**Fix:** Our solution places the backend and database on their own
-private network (`backend_net`) that is not exposed externally.  The
-backend only accepts traffic from Nginx, which resides on both
-`frontend_net` and `backend_net`.  There is no published port for
-the backend service on the host, so it cannot be reached directly from
-the outside.  A detailed walkthrough of the exploit and mitigation will
-be added in a future commit.
+**Exploit walkthrough:**
+
+1. The backend service published port 8080 on the host network.  A
+   penetration tester could run `curl http://localhost:8080/api/message` and
+   receive a valid response, confirming that the backend was directly
+   accessible.  
+2. Because the route bypassed Nginx entirely, the HTTP Basic Auth on
+   `/admin` and any other restrictions in `nginx.conf` were not applied.  
+3. The attacker could enumerate API endpoints, access admin functions,
+   or perform brute‑force attacks without hitting the rate limiter.  
+
+**Fix:** To mitigate this, we decoupled the backend from the host by
+removing any published ports and isolating it on its own network
+(`backend_net`)【797676570954106†L98-L107】.  Only the Nginx container is
+connected to both `frontend_net` and `backend_net`, making it the sole
+gateway between the outside world and the backend.  The `docker-compose.yml`
+no longer contains a `ports` section for the backend, so the service
+listens only on the internal Docker network.  With this topology, a
+request to `http://localhost:8080` fails, while Nginx forwards
+authorised and rate‑limited requests to the backend via the private
+network.  This demonstrates the principle of network isolation
+required by the brief【797676570954106†L98-L107】.
+
+**Concept:** Network isolation prevents lateral movement and enforces
+the principle of least privilege.  By creating separate networks for
+frontend, backend and management, we ensure that each service can only
+communicate with the specific peers it needs.  Attackers cannot reach
+internal services directly and must traverse the hardened proxy, where
+additional controls are enforced.
 
 ## 2. The “Leaked Secret” Incident
 
@@ -71,8 +95,27 @@ fields in the SFTP command accordingly.
 
 ## 4. Benchmarking & Tuning
 
-Using `docker stats` and load testing tools, we will observe the
-performance characteristics of each service under heavy load.  If
-resource constraints cause a service to crash or become unresponsive
-we will justify any changes to the cgroup limits and document the
-process for fine‑tuning memory and CPU allocations.
+Performance tuning is essential to balance resource usage and
+responsiveness.  The project requires applying cgroup limits and
+observing the behaviour under load【797676570954106†L124-L127】.  To
+benchmark and tune the environment:
+
+1. Use a load testing tool (for example, [`wrk`](https://github.com/wg/wrk)
+   or [`ab`](https://httpd.apache.org/docs/2.4/programs/ab.html)) to send
+   repeated requests to the frontend or API endpoints.  Simulate heavy
+   usage by increasing concurrency and request rate.  
+2. Run `docker stats` in another terminal to monitor CPU, memory and
+   network usage for each container.  Note when services approach
+   their limits (e.g. the backend reaching 512 MB memory).  
+3. If a service becomes unresponsive or restarts due to an Out
+   of Memory (OOM) condition, adjust the corresponding `deploy.resources.limits`
+   in `docker-compose.yml`.  For example, increase the backend memory
+   limit from `512m` to `768m` if it consistently OOMs under test.  
+4. Document the before/after metrics and justify why the new limits are
+   more appropriate.  Always consider the capacity of your host when
+   raising limits.
+
+This iterative process ensures that resource constraints are neither too
+restrictive nor overly generous.  It also provides evidence for
+decisions made when defending the chosen configuration during the
+project review.
