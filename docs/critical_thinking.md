@@ -29,10 +29,12 @@ be added in a future commit.
 (`server.key`) into the version control system.  Revealing this file
 compromises the confidentiality of encrypted traffic.
 
-**Response:** Future commits will simulate this accident, execute a
-hotfix branch to generate new certificates, and document the steps to
-revoke the compromised key.  We will also update `.gitignore` to
-prevent future secrets from being tracked.
+**Response:** This commit introduces a `.gitignore` file that
+excludes build artefacts and adds a commented reminder to ignore
+certificates in a real project.  In a future hotfix we will simulate
+the leak of `server.key`, generate new certificates and revoke the
+compromised key.  The hotfix will also update `.gitignore` to ensure
+keys and other secrets are never committed again.
 
 ## 3. UID/GID Troubleshooting
 

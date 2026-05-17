@@ -69,6 +69,12 @@ services:
         limits:
           cpus: '0.5'
           memory: 512m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/message"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
 
   # MySQL database.  Uses the official image and initialises itself via
   # init.sql on first boot.  A healthcheck ensures the service is ready
@@ -93,6 +99,11 @@ services:
       retries: 5
       start_period: 30s
       timeout: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
 
   # Reverse proxy and static file server.  Acts as the single entry point
   # for the application.  Handles TLS termination using self‑signed

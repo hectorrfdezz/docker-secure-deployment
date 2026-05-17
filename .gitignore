@@ -1,0 +1,21 @@
+# Ignore build artefacts and temporary files
+
+# Node modules (not committed into version control)
+frontend/node_modules/
+
+# Maven build output
+backend/target/
+
+# IDE specific files
+.vscode/
+.idea/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Ignore environment and certificate keys in a real project.  For this
+# exercise the certs directory is intentionally committed to the repo,
+# but you should exclude keys and sensitive files in a production
+# repository.
+# certs/

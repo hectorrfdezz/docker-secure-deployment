@@ -36,12 +36,23 @@ Nginx in a later commit to resolve ownership issues on the shared
 volume.
 
 ## Resource Limits
+Both the `backend` and `db` services include `deploy` sections with
+cgroup resource limits.  The backend is constrained to half a CPU and
+512 MB of RAM.  The database is likewise limited to half a CPU and
+512 MB.  These limits help prevent a runaway process from exhausting
+system resources.  Monitor your containers with `docker stats` and
+adjust these values based on observed usage and performance
+requirements.
 
-The `backend` service includes a `deploy` section in
-`docker-compose.yml` that limits CPU usage to half a core and memory to
-512 MB.  These constraints are implemented via cgroups and help to
-prevent a runaway process from exhausting system resources.  Additional
-limits will be applied to the database service after stress testing.
+## Healthchecks
+
+Healthchecks ensure that dependent services start only when their
+dependencies are ready.  The backend service defines a `healthcheck`
+that performs an HTTP request to `/api/message`.  If the request
+fails, Docker will mark the container as unhealthy and other
+services that depend on it (such as Nginx) will wait until it becomes
+healthy before routing traffic.  The database retains its built‑in
+healthcheck via `mysqladmin ping`.
 
 ## SSL/TLS Termination
 
