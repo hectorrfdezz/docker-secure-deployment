@@ -19,6 +19,7 @@ screenshot.
 | * 3e7a1f9 hotfix: regenerate TLS certificates and update .gitignore
 |/  
 * 9502bc4 feat: update docs with benchmark and bypass explanations
+* 7b1d2f0 (origin/release/1.0.0) chore: bump backend to version 1.0.0 for final release
 ```
 
 **Branching summary**
