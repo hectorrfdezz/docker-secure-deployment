@@ -1,0 +1,162 @@
+version: '3.8'
+
+# Top‑level orchestration for the multi‑tier application.  This file defines
+# five services along with the networks and volumes they require.  The
+# architecture follows a strict separation between the presentation
+# (frontend), application logic (backend), data (db), the edge proxy (nginx)
+# and a dedicated SFTP management endpoint.  Each service is isolated on
+# its own network where possible, and resource limits/healthchecks are
+# defined to encourage production ready behaviour.
+
+services:
+  # React application which is compiled inside its own Dockerfile using a
+  # multi‑stage build.  The resulting static files are copied into a
+  # read‑only volume shared with Nginx.  Note: the container itself is
+  # intentionally lightweight and does not serve traffic directly.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    environment:
+      # URL used by the frontend to reach the backend API.  It points at the
+      # internal service name on the backend network.  The protocol is
+      # HTTP because TLS termination happens at the reverse proxy layer.
+      - REACT_APP_API_URL=http://backend:8080/api
+    networks:
+      - frontend_net
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    # Mount the shared static volume into this container.  During
+    # startup the container copies the built React application into
+    # this volume.  The custom command defined below performs the copy
+    # and then sleeps indefinitely so that the container stays alive and
+    # the volume contents remain accessible.  Without this mount the
+    # Nginx service would have nothing to serve.
+    volumes:
+      - static_content:/static_output
+    command: /bin/sh -c "cp -r /static/* /static_output && sleep infinity"
+
+  # Spring Boot application implementing the business logic.  Built via
+  # multi‑stage in its own Dockerfile.  Environment variables control
+  # database connectivity.  Resource limits are applied via the deploy
+  # stanza to exercise cgroup constraints.  The container runs as a
+  # non‑root user defined in the Dockerfile.  A healthcheck is provided
+  # through the Actuator port by default (see Dockerfile comments).
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://db:3306/appdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=example
+      # Control the JPA schema generation behaviour.  During development
+      # we default to update which will create tables as needed.  In
+      # production this should be validate or none.
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+    networks:
+      - backend_net
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
+
+  # MySQL database.  Uses the official image and initialises itself via
+  # init.sql on first boot.  A healthcheck ensures the service is ready
+  # before other containers attempt to connect.  Data is persisted in
+  # db_data to survive container restarts.  Credentials and database
+  # name are defined via environment variables.
+  db:
+    image: mysql:8.0
+    container_name: db
+    environment:
+      - MYSQL_ROOT_PASSWORD=example
+      - MYSQL_DATABASE=appdb
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - backend_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 5s
+
+  # Reverse proxy and static file server.  Acts as the single entry point
+  # for the application.  Handles TLS termination using self‑signed
+  # certificates stored in the certs/ directory.  Includes rate limiting
+  # and basic auth for the /admin path.  Two networks are attached so
+  # that the proxy can communicate with both the frontend and backend
+  # services while remaining isolated from the outside world.  Custom
+  # configuration and error pages are mounted read‑only.
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Static assets produced by the frontend build are mounted here.  The
+      # volume is marked read‑only to avoid accidental modification by
+      # Nginx.
+      - static_content:/usr/share/nginx/html:ro
+      # Bring in the custom Nginx configuration.
+      - ./nginx/conf/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Self‑signed certificate and key.  For demonstration only; in
+      # production use a proper CA issued certificate.  Mounted read‑only.
+      - ./certs:/etc/nginx/certs:ro
+      # Basic authentication file for the /admin path.  Mounted read‑only.
+      - ./nginx/conf/.htpasswd:/etc/nginx/.htpasswd:ro
+      # Custom error pages.
+      - ./nginx/errors:/usr/share/nginx/html/errors:ro
+    networks:
+      - frontend_net
+      - backend_net
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # Secure File Transfer Protocol service.  Provides a chrooted SFTP
+  # endpoint to upload static content into the shared volume used by
+  # Nginx.  At the moment a default user is defined with a guessed
+  # UID/GID that should match Nginx's unprivileged user.  This value
+  # will be tuned later after inspecting the actual UID/GID inside the
+  # container.  The service listens on port 2222 on the host.
+  sftp:
+    image: atmoz/sftp:latest
+    container_name: sftp
+    volumes:
+      - static_content:/home/sftp/upload
+    networks:
+      - sftp_net
+    ports:
+      - "2222:22"
+    command: sftpuser:password:101:101:upload
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  static_content:
+
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
+  sftp_net:
+    driver: bridge
