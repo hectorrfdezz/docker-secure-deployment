@@ -144,17 +144,14 @@ El backend espera a que la base de datos esté saludable antes de arrancar compl
 
 ## 11. Rotación de logs
 
-Para evitar crecimiento indefinido de logs se configura el driver `json-file`:
+Para evitar que los logs crezcan sin límite, el proyecto configura el driver `json-file` en `docker-compose.yml` mediante un bloque reutilizable:
 
 ```yaml
-logging:
+x-logging: &default-logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "3"
-```
-
-Con esto Docker conserva hasta tres archivos de 10 MB por contenedor.
 
 ## 12. Comandos de administración
 
