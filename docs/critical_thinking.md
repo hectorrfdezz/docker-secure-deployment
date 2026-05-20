@@ -93,6 +93,22 @@ match, run `id nginx` inside an `nginx:alpine` container and
 and GID 101.  If these values differ, adjust the third and fourth
 fields in the SFTP command accordingly.
 
+To provide clear evidence of this alignment, the siguiente commands can be executed:
+
+```bash
+# Comprobar el UID/GID del usuario nginx de la imagen oficial
+docker run --rm nginx:alpine id nginx
+# Salida esperada:
+# uid=101(nginx) gid=101(nginx) groups=101(nginx)
+
+# Comprobar el UID/GID del usuario sftpuser en el contenedor en ejecución
+docker-compose exec sftp id sftpuser
+# Salida esperada:
+# uid=101(sftpuser) gid=101(sftpuser) groups=101(sftpuser)
+```
+
+Ambas salidas muestran el mismo UID/GID 101【471095201217767†L340-L344】, lo que garantiza que los archivos subidos por SFTP son legibles por Nginx sin recurrir a permisos 777.  Si los valores difieren, ajusta los campos en la sección `command` del servicio `sftp` en `docker-compose.yml`.
+
 ## 4. Benchmarking & Tuning
 
 Performance tuning is essential to balance resource usage and
