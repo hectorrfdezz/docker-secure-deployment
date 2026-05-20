@@ -1,137 +1,306 @@
 # Critical Thinking & Security Responses
 
-The project brief includes several security challenges that must be
-analysed and remediated.  The following sections will document the
-problems encountered, the solutions applied and the underlying
-principles.  For this initial commit the sections are placeholders to
-be expanded upon after the vulnerabilities are demonstrated and
-mitigated.
+Este documento responde a los cuatro apartados críticos exigidos en el proyecto: bypass del backend, fuga de secretos, permisos UID/GID y benchmarking.
 
-## 1. The “Bypass” Vulnerability
+## 1. Vulnerabilidad “Bypass”
 
-**Problem:** In the professor’s intentionally flawed architecture, an
-external attacker could bypass the HTTP Basic Auth applied by Nginx by
-connecting directly to the backend on port 8080.  This was possible
-because the backend exposed its port on the host and shared the same
-Docker network as the frontend.  An attacker could simply browse to
-`http://<server_ip>:8080/api/message` and retrieve data without ever
-touching Nginx.
+### Problema
 
-**Exploit walkthrough:**
+La arquitectura vulnerable consistía en publicar el backend directamente hacia el host mediante el puerto `8080`. Aunque Nginx protegiera `/admin` con Basic Auth, un atacante podía saltarse el proxy accediendo directamente al backend:
 
-1. The backend service published port 8080 on the host network.  A
-   penetration tester could run `curl http://localhost:8080/api/message` and
-   receive a valid response, confirming that the backend was directly
-   accessible.  
-2. Because the route bypassed Nginx entirely, the HTTP Basic Auth on
-   `/admin` and any other restrictions in `nginx.conf` were not applied.  
-3. The attacker could enumerate API endpoints, access admin functions,
-   or perform brute‑force attacks without hitting the rate limiter.  
+```bash
+curl http://localhost:8080/api/message
+```
 
-**Fix:** To mitigate this, we decoupled the backend from the host by
-removing any published ports and isolating it on its own network
-(`backend_net`)【797676570954106†L98-L107】.  Only the Nginx container is
-connected to both `frontend_net` and `backend_net`, making it the sole
-gateway between the outside world and the backend.  The `docker-compose.yml`
-no longer contains a `ports` section for the backend, so the service
-listens only on the internal Docker network.  With this topology, a
-request to `http://localhost:8080` fails, while Nginx forwards
-authorised and rate‑limited requests to the backend via the private
-network.  This demonstrates the principle of network isolation
-required by the brief【797676570954106†L98-L107】.
+Si ese comando devuelve respuesta, significa que el backend está expuesto fuera de Docker. En ese caso, cualquier protección configurada en Nginx no sirve para esa ruta, porque la petición no pasa por Nginx.
 
-**Concept:** Network isolation prevents lateral movement and enforces
-the principle of least privilege.  By creating separate networks for
-frontend, backend and management, we ensure that each service can only
-communicate with the specific peers it needs.  Attackers cannot reach
-internal services directly and must traverse the hardened proxy, where
-additional controls are enforced.
+### Riesgo
 
-## 2. The “Leaked Secret” Incident
+El riesgo principal es que el backend queda disponible desde el exterior sin pasar por:
 
-**Scenario:** Accidental commitment of the TLS private key
-(`server.key`) into the version control system.  Revealing this file
-compromises the confidentiality of encrypted traffic.
+- HTTPS gestionado por Nginx.
+- Basic Auth.
+- Rate limiting.
+- Cabeceras de seguridad.
+- Control centralizado de logs.
 
-**Response:** In this commit we perform the hotfix.  First we
-regenerated a new self‑signed certificate and key using `openssl`
-and replaced the old files in the `certs/` directory.  We then
-updated `.gitignore` to ignore all `*.key` files under `certs/` so that
-private keys are never committed again.  Finally, we documented the
-steps here for incident response:  
-1. Detect the leak (e.g. by code review or security scanning).  
-2. Rotate the certificates by generating a new key and certificate
-   using a secure command such as:
+Esto rompe la idea de que Nginx sea el único punto de entrada.
+
+### Corrección aplicada
+
+La corrección consiste en eliminar cualquier publicación de puertos del backend y dejarlo solo en una red interna:
+
+```yaml
+backend:
+  networks:
+    - backend_net
+  # sin ports
+```
+
+Nginx sí se conecta a `backend_net`:
+
+```yaml
+nginx:
+  networks:
+    - frontend_net
+    - backend_net
+```
+
+De esta manera, el flujo correcto es:
+
+```text
+Cliente -> HTTPS -> Nginx -> backend_net -> Backend
+```
+
+Y el flujo inseguro queda bloqueado:
+
+```text
+Cliente -> Backend:8080 ❌
+```
+
+### Comprobación
+
+```bash
+curl http://localhost:8080/api/message
+```
+
+Debe fallar.
+
+```bash
+curl -k https://localhost/api/message
+```
+
+Debe funcionar, porque pasa por Nginx.
+
+### Concepto aprendido
+
+La red interna de Docker reduce la superficie de ataque. Un servicio no debe exponerse al host si solo necesita comunicarse con otro contenedor. En este proyecto, el backend solo necesita hablar con Nginx y con la base de datos, no con el exterior.
+
+## 2. Incidente “Leaked Secret”
+
+### Situación simulada
+
+Se simula que durante el desarrollo se sube por error la clave privada TLS:
+
+```text
+certs/server.key
+```
+
+Una clave privada no debe exponerse, porque permitiría a un atacante suplantar el servidor o comprometer comunicaciones.
+
+### Pasos de respuesta
+
+1. Detectar la fuga durante una revisión del historial o del commit.
+2. Crear una rama de hotfix:
+
+   ```bash
+   git checkout main
+   git checkout -b hotfix/certificados
+   ```
+
+3. Generar un nuevo certificado y una nueva clave:
 
    ```bash
    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-       -keyout certs/server.key -out certs/server.crt \
-       -subj "/C=ES/ST=Sevilla/L=Sevilla/O=MyCompany/OU=IT/CN=localhost"
+     -keyout certs/server.key \
+     -out certs/server.crt \
+     -subj "/C=ES/ST=Sevilla/L=Sevilla/O=Lab/OU=DAW/CN=localhost"
    ```
 
-3. Update your configuration (`nginx.conf`) if necessary to point to
-   the new certificate paths.  
-4. Add the private key to `.gitignore` so it does not get committed
-   again.  
-5. Force rotate any secrets dependent on the leaked key (e.g. by
-   reissuing certificates with a trusted CA in production).  
-6. Commit these changes on a `hotfix/` branch and merge back into
-   `develop` and `main` with a clear commit message describing the
-   incident and resolution.
+4. Actualizar `.gitignore` para evitar futuras subidas accidentales de claves:
 
-## 3. UID/GID Troubleshooting
-The SFTP service must write files into a shared volume that Nginx can
-read without using permissive 777 permissions.  This requires aligning
-the user and group IDs of the SFTP user with the Nginx user inside the
-container.  The official `nginx` image uses UID and GID `101` for the
-`nginx` user【368301268539781†L336-L343】, so our `docker-compose.yml` configures
-the SFTP user command as `sftpuser:password:101:101:upload`.  The
-volume is mounted at `/home/sftpuser/upload` to match the `upload`
-directory specified in the user definition.  To verify that the IDs
-match, run `id nginx` inside an `nginx:alpine` container and
-`id sftpuser` inside the SFTP container.  Both should report UID 101
-and GID 101.  If these values differ, adjust the third and fourth
-fields in the SFTP command accordingly.
+   ```gitignore
+   certs/*.key
+   ```
 
-To provide clear evidence of this alignment, the siguiente commands can be executed:
+5. Confirmar que Nginx sigue apuntando a los mismos nombres:
+
+   ```nginx
+   ssl_certificate     /etc/nginx/certs/server.crt;
+   ssl_certificate_key /etc/nginx/certs/server.key;
+   ```
+
+6. Probar el arranque:
+
+   ```bash
+   docker compose up -d --build
+   curl -k -I https://localhost
+   ```
+
+7. Hacer commit del hotfix:
+
+   ```bash
+   git add certs/server.crt certs/server.key .gitignore docs/critical_thinking.md
+   git commit -m "hotfix: regenerar certificados y documentar incidente"
+   ```
+
+8. Fusionar el hotfix en `main` y `develop`.
+
+### Nota de laboratorio
+
+En este proyecto se usan certificados autofirmados de laboratorio. En un entorno real, además de regenerar la clave, habría que revocar el certificado comprometido y emitir uno nuevo con una CA confiable.
+
+### Concepto aprendido
+
+Un secreto filtrado no se “arregla” solo ocultándolo después. Hay que rotarlo. La clave comprometida debe considerarse inválida desde el momento en que entra en el repositorio.
+
+## 3. Resolución UID/GID entre SFTP y Nginx
+
+### Problema
+
+El contenedor SFTP escribe archivos en un volumen compartido y Nginx los sirve. Si SFTP crea los archivos con un UID/GID incompatible, Nginx podría no leerlos. La solución insegura sería:
 
 ```bash
-# Comprobar el UID/GID del usuario nginx de la imagen oficial
-docker run --rm nginx:alpine id nginx
-# Salida esperada:
-# uid=101(nginx) gid=101(nginx) groups=101(nginx)
-
-# Comprobar el UID/GID del usuario sftpuser en el contenedor en ejecución
-docker-compose exec sftp id sftpuser
-# Salida esperada:
-# uid=101(sftpuser) gid=101(sftpuser) groups=101(sftpuser)
+chmod 777
 ```
 
-Ambas salidas muestran el mismo UID/GID 101【471095201217767†L340-L344】, lo que garantiza que los archivos subidos por SFTP son legibles por Nginx sin recurrir a permisos 777.  Si los valores difieren, ajusta los campos en la sección `command` del servicio `sftp` en `docker-compose.yml`.
+Eso no se debe usar porque da permisos de lectura, escritura y ejecución a todos.
 
-## 4. Benchmarking & Tuning
+### Diagnóstico
 
-Performance tuning is essential to balance resource usage and
-responsiveness.  The project requires applying cgroup limits and
-observing the behaviour under load【797676570954106†L124-L127】.  To
-benchmark and tune the environment:
+Primero se comprueba el usuario de Nginx:
 
-1. Use a load testing tool (for example, [`wrk`](https://github.com/wg/wrk)
-   or [`ab`](https://httpd.apache.org/docs/2.4/programs/ab.html)) to send
-   repeated requests to the frontend or API endpoints.  Simulate heavy
-   usage by increasing concurrency and request rate.  
-2. Run `docker stats` in another terminal to monitor CPU, memory and
-   network usage for each container.  Note when services approach
-   their limits (e.g. the backend reaching 512 MB memory).  
-3. If a service becomes unresponsive or restarts due to an Out
-   of Memory (OOM) condition, adjust the corresponding `deploy.resources.limits`
-   in `docker-compose.yml`.  For example, increase the backend memory
-   limit from `512m` to `768m` if it consistently OOMs under test.  
-4. Document the before/after metrics and justify why the new limits are
-   more appropriate.  Always consider the capacity of your host when
-   raising limits.
+```bash
+docker run --rm nginx:alpine id nginx
+```
 
-This iterative process ensures that resource constraints are neither too
-restrictive nor overly generous.  It also provides evidence for
-decisions made when defending the chosen configuration during the
-project review.
+Salida esperada aproximada:
+
+```text
+uid=101(nginx) gid=101(nginx) groups=101(nginx)
+```
+
+Después se comprueba el usuario SFTP:
+
+```bash
+docker compose exec sftp id sftpuser
+```
+
+### Corrección aplicada
+
+El servicio SFTP se define con UID/GID 101:
+
+```yaml
+sftp:
+  image: atmoz/sftp:latest
+  command: sftpuser:password:101:101:upload
+  volumes:
+    - static_content:/home/sftpuser/upload
+```
+
+Nginx monta el mismo volumen en modo lectura:
+
+```yaml
+nginx:
+  volumes:
+    - static_content:/usr/share/nginx/html:ro
+```
+
+Con esto, los archivos subidos por SFTP quedan disponibles para Nginx sin abrir permisos de forma insegura.
+
+### Prueba
+
+1. Crear un archivo local:
+
+   ```bash
+   echo "Archivo subido por SFTP" > prueba.html
+   ```
+
+2. Subirlo:
+
+   ```bash
+   sftp -P 2222 sftpuser@localhost
+   put prueba.html upload/prueba.html
+   ```
+
+3. Consultarlo desde Nginx:
+
+   ```bash
+   curl -k https://localhost/prueba.html
+   ```
+
+Si se devuelve el contenido, la integración funciona.
+
+### Concepto aprendido
+
+Los volúmenes Docker conservan propietarios numéricos. Por eso importa el UID/GID, no solo el nombre del usuario. Alinear IDs permite compartir archivos de forma segura entre contenedores.
+
+## 4. Benchmarking y tuning
+
+### Objetivo
+
+El objetivo es comprobar si los límites de CPU y memoria definidos para backend y base de datos son razonables.
+
+Configuración inicial:
+
+```yaml
+backend:
+  deploy:
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 512m
+
+db:
+  deploy:
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 512m
+```
+
+### Prueba básica
+
+Abrir una terminal para monitorizar:
+
+```bash
+docker stats
+```
+
+En otra terminal o desde el navegador, generar carga recargando varias veces la página principal y la ruta de API:
+
+```bash
+curl -k https://localhost/api/message
+```
+
+Para una prueba más fuerte se puede usar `wrk` o `ab`:
+
+```bash
+wrk -t4 -c50 -d30s https://localhost/api/message
+```
+
+### Qué observar
+
+Durante la prueba se revisa:
+
+- Uso de CPU del backend.
+- Memoria consumida por backend y MySQL.
+- Reinicios de contenedores.
+- Estado `healthy/unhealthy`.
+- Respuestas lentas o errores `50x`.
+
+### Decisión de tuning
+
+Si el backend se reinicia por falta de memoria, se justifica subir el límite, por ejemplo:
+
+```yaml
+memory: 768m
+```
+
+Si MySQL responde lento bajo carga, se puede aumentar CPU:
+
+```yaml
+cpus: '0.75'
+```
+
+En el estado actual, los límites de `0.5 CPU` y `512m` se mantienen porque son suficientes para una práctica local y evitan consumo excesivo del equipo.
+
+### Evidencia recomendada
+
+Guardar una captura de `docker stats` durante la prueba en:
+
+```text
+docs/images/docker-stats.png
+```
+
+También conviene incluir una captura de `docker compose ps` mostrando los servicios en estado correcto.

@@ -1,42 +1,103 @@
 # Git Flow Report
 
-The following is an example of the Git history for this project using
-Git Flow.  The graph was produced with `git log --graph --oneline
---all` after completing all tasks.  Commit messages are abbreviated
-for brevity.  Use this as a template when capturing your own
-screenshot.
+Este documento resume el flujo Git utilizado en el proyecto y la evidencia que debe acompañar a la entrega.
 
+## 1. Ramas utilizadas
+
+El proyecto se organiza siguiendo una estructura Git Flow:
+
+| Rama | Uso |
+|---|---|
+| `main` | Versión final estable para entregar. |
+| `develop` | Rama de integración durante el desarrollo. |
+| `feature/*` | Ramas para nuevas funcionalidades o mejoras. |
+| `release/*` | Rama de preparación antes de cerrar una versión. |
+| `hotfix/*` | Rama para corregir incidencias urgentes desde `main`. |
+
+## 2. Ramas relevantes del proyecto
+
+Ramas usadas o esperadas en este proyecto:
+
+```text
+main
+develop
+feature/frontend
+feature/backend
+feature/nginx-hardening
+feature/sftp
+feature/documentacion
+release/1.0.0
+hotfix/certificados
 ```
-*   b5a3e2d (origin/main) Merge branch 'release/1.0.0'
-|\
-| * 2d0419c (origin/release/1.0.0) docs: finalise manuals and git flow report
-| * 4a8b67f feat: align SFTP permissions and volume mounting
-| * e9d7c10 feat: add healthchecks and resource limits
-|/  
-* 1c9f3a6 feat: initial multi-tier architecture
-*   8fcd2ea (origin/hotfix/leaked-cert) Merge branch 'hotfix/leaked-cert'
-|\
-| * 3e7a1f9 hotfix: regenerate TLS certificates and update .gitignore
-|/  
-* 9502bc4 feat: update docs with benchmark and bypass explanations
-* 7b1d2f0 (origin/release/1.0.0) chore: bump backend to version 1.0.0 for final release
+
+No es obligatorio que los nombres sean exactamente esos, pero sí debe verse una separación clara entre desarrollo, release y hotfix.
+
+## 3. Flujo seguido
+
+1. Desarrollo inicial en `develop`.
+2. Creación de ramas `feature/` para componentes concretos.
+3. Integración de las features en `develop`.
+4. Creación de `release/1.0.0` para preparar la entrega.
+5. Simulación del incidente de `server.key` y corrección en `hotfix/certificados`.
+6. Merge del hotfix tanto a `main` como a `develop`.
+7. Merge final de release a `main`.
+
+## 4. Comandos de comprobación
+
+Para generar la evidencia del historial:
+
+```bash
+git log --graph --oneline --decorate --all
 ```
 
-**Branching summary**
+También se puede comprobar el listado de ramas:
 
-- `main`: contains tagged release versions ready for delivery.  Only
-  merges from `release/` and `hotfix/` branches are allowed.
-- `develop`: integration branch where features are merged during
-  development.  Commits 1–4 reside here before being promoted to a
-  release.
-- `feature/*`: used for developing individual features (e.g.
-  `feature/healthchecks` and `feature/sftp-perms`).  Each feature is
-  merged into `develop` when complete.
-- `hotfix/*`: used to address urgent issues on `main`, such as the
-  leaked TLS key.  Changes are merged into both `main` and `develop`.
-- `release/*`: used to prepare a release candidate.  Only bug fixes,
-  version bumps and documentation updates are performed here before
-  merging back into `main` and `develop`.
+```bash
+git branch -a
+```
 
-Replace the commit hashes and messages above with your own
-repository’s history when producing the final report.
+## 5. Captura obligatoria
+
+La captura debe mostrar el resultado de:
+
+```bash
+git log --graph --oneline --decorate --all
+```
+
+Guardar la imagen en:
+
+```text
+docs/images/git-flow.png
+```
+
+Incluirla aquí:
+
+![Git Flow](images/git-flow.png)
+
+## 6. Qué debe verse en la captura
+
+La captura debería mostrar:
+
+- `main`.
+- `develop`.
+- Al menos una rama `feature/`.
+- Una rama `release/`.
+- Una rama `hotfix/`.
+- Commits con mensajes descriptivos.
+- Merges visibles entre ramas.
+
+## 7. Ejemplos de mensajes correctos
+
+```text
+feat: crear arquitectura base con docker compose
+feat: añadir proxy nginx con tls y basic auth
+feat: configurar sftp con volumen compartido
+fix: ajustar permisos uid gid entre sftp y nginx
+docs: actualizar manuales y evidencias del despliegue
+hotfix: regenerar certificados y documentar incidente
+chore: preparar release 1.0.0
+```
+
+## 8. Valoración
+
+El flujo Git demuestra que el proyecto no se ha construido con commits sueltos directamente sobre `main`, sino siguiendo una metodología de desarrollo controlada. El hotfix de certificados representa la respuesta al incidente de seguridad simulado.
