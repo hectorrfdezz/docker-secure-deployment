@@ -1,0 +1,31 @@
+warning: in the working copy of 'docker-compose.yml', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/docker-compose.yml b/docker-compose.yml[m
+[1mindex f4d6c6b..29b706c 100644[m
+[1m--- a/docker-compose.yml[m
+[1m+++ b/docker-compose.yml[m
+[36m@@ -141,6 +141,12 @@[m [mservices:[m
+       backend:[m
+         condition: service_started[m
+     restart: unless-stopped[m
+[32m+[m[32m    healthcheck:[m
+[32m+[m[32m      test: ["CMD", "sh", "-c", "wget -qO- http://localhost || exit 1"][m
+[32m+[m[32m      interval: 30s[m
+[32m+[m[32m      timeout: 10s[m
+[32m+[m[32m      retries: 3[m
+[32m+[m[32m      start_period: 20s[m
+ [m
+   # Secure File Transfer Protocol service.  Provides a chrooted SFTP[m
+   # endpoint to upload static content into the shared volume used by[m
+[36m@@ -163,6 +169,12 @@[m [mservices:[m
+       - "2222:22"[m
+     command: sftpuser:password:101:101:upload[m
+     restart: unless-stopped[m
+[32m+[m[32m    healthcheck:[m
+[32m+[m[32m      test: ["CMD", "sh", "-c", "ps -o comm | grep -q sshd"][m
+[32m+[m[32m      interval: 30s[m
+[32m+[m[32m      timeout: 10s[m
+[32m+[m[32m      retries: 3[m
+[32m+[m[32m      start_period: 20s[m
+ [m
+ volumes:[m
+   db_data:[m

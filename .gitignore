@@ -1,20 +1,18 @@
-# Ignore build artefacts and temporary files
-
-# Node modules (not committed into version control)
+# Build outputs
 frontend/node_modules/
-
-# Maven build output
+frontend/build/
 backend/target/
 
-# IDE specific files
+# IDE files
 .vscode/
 .idea/
 
 # Logs and temporary files
 *.log
 *.tmp
+.DS_Store
 
-# Ignore environment and certificate keys in a real project.  In this
-# commit we simulate a leaked key and regenerate it.  To prevent
-# further leaks, ignore all private keys in the certs directory.
+# Environment files and private keys
+.env
+*.env
 certs/*.key
