@@ -1,133 +1,207 @@
 # Administration & Hardening Manual
 
-This manual documents the security configuration and operational
-guidelines for the multi‑tier deployment.  It covers network
-segmentation, user privileges, resource limits, SSL/TLS setup and
-procedures for log rotation.  Future commits will expand upon this
-information with performance tuning and incident response details.
+Este documento resume las decisiones de administración, seguridad y mantenimiento aplicadas al despliegue.
 
-## Network Isolation
+## 1. Separación por servicios
 
-Three private Docker networks are defined to enforce isolation between
-services:
+El proyecto se divide en servicios independientes:
 
-- **frontend_net**: connects the `frontend` and `nginx` containers.  The
-  React build container copies static assets into a shared volume which
-  is served by Nginx.  No other service is attached to this network.
-- **backend_net**: connects the `backend`, `db` and `nginx` containers.
-  Only Nginx can reach the backend and database from outside.
-- **sftp_net**: connects the `sftp` container to the host.  The SFTP
-  service does not share a network with the application servers.  It
-  only writes into the shared `static_content` volume, which is
-  mounted at `/home/sftpuser/upload` inside the SFTP container.
+- `frontend`: genera la interfaz React.
+- `backend`: ejecuta la lógica de aplicación con Spring Boot.
+- `db`: almacena datos en MySQL.
+- `nginx`: actúa como reverse proxy y único punto de entrada web.
+- `sftp`: permite gestionar contenido estático mediante SFTP.
 
-This strict segmentation ensures that an attacker cannot bypass Nginx’s
-authentication and reach the backend directly.  In future revisions
-we will document how this design mitigates the “Bypass” vulnerability
-described in the project brief.
+Esta separación evita una arquitectura monolítica y permite aplicar controles concretos a cada capa.
 
-## User Privileges
+## 2. Aislamiento de redes
 
-Custom users are created in the frontend and backend Dockerfiles using
-the `adduser` command.  These users run the application processes
-instead of the root user, following the principle of least privilege.
-The Nginx base image already defines an `nginx` user which is used by
-default.  The SFTP image will be configured to align its UID/GID with
-Nginx in a later commit to resolve ownership issues on the shared
-volume.
+Se usan redes Docker separadas:
 
-## Resource Limits
-Both the `backend` and `db` services include `deploy` sections with
-cgroup resource limits.  The backend is constrained to half a CPU and
-512 MB of RAM.  The database is likewise limited to half a CPU and
-512 MB.  These limits help prevent a runaway process from exhausting
-system resources.  Monitor your containers with `docker stats` and
-adjust these values based on observed usage and performance
-requirements.
+| Red | Servicios conectados | Motivo |
+|---|---|---|
+| `frontend_net` | `frontend`, `nginx` | Separar la capa de presentación. |
+| `backend_net` | `backend`, `db`, `nginx` | Permitir que solo Nginx hable con el backend desde fuera. |
+| `sftp_net` | `sftp` | Aislar la gestión de contenidos del resto de la aplicación. |
 
-## Healthchecks
+El backend no publica el puerto `8080`. Solo Nginx puede alcanzarlo por la red interna. Así se evita que un atacante salte la autenticación del proxy accediendo directamente al backend.
 
-Healthchecks ensure that dependent services start only when their
-dependencies are ready.  The backend service defines a `healthcheck`
-that performs an HTTP request to `/api/message`.  If the request
-fails, Docker will mark the container as unhealthy and other
-services that depend on it (such as Nginx) will wait until it becomes
-healthy before routing traffic.  The database retains its built‑in
-healthcheck via `mysqladmin ping`.
+## 3. Principio de menor privilegio
 
-In addition, esta revisión añade *healthchecks* para Nginx y SFTP.  Nginx ejecuta un comando que solicita la página raíz (`wget -qO- http://localhost`) y falla si no hay respuesta; el servicio SFTP comprueba que el proceso `sshd` está activo mediante `ps`.  Estas comprobaciones permiten que Docker reinicie estos servicios automáticamente en caso de fallo y proporcionan una detección temprana de errores.
+Los contenedores personalizados no deben ejecutarse como root:
 
-## SSL/TLS Termination
+- El frontend define un usuario no root en su Dockerfile.
+- El backend define un usuario no root en su Dockerfile.
+- Nginx usa el usuario `nginx` de la imagen oficial.
+- SFTP usa un usuario limitado y chrooted.
 
-Self‑signed certificates reside in the `certs/` directory and are
-mounted into the Nginx container at `/etc/nginx/certs`.  The
-`nginx.conf` file configures Nginx to listen on port 443, load the
-certificates and redirect all HTTP traffic to HTTPS.  In a
-production environment you would replace these files with certificates
-issued by a trusted Certificate Authority (e.g. via Let’s Encrypt).
+Esto reduce el impacto de una posible vulnerabilidad dentro de un contenedor.
 
-### Cabeceras de seguridad
+## 4. Hardening de Nginx
 
-Además de TLS y redirección, se han añadido varias cabeceras HTTP para fortalecer la seguridad:
+La configuración de Nginx aplica las siguientes medidas:
 
-- **Strict-Transport-Security** obliga al navegador a usar HTTPS durante un año.
-- **X-Content-Type-Options** evita que el navegador interprete incorrectamente los tipos MIME.
-- **X-Frame-Options** impide que el sitio sea cargado en iframes de otros dominios.
-- **X-XSS-Protection** activa la protección contra ataques de cross‑site scripting heredada.
-- **Content-Security-Policy** restringe las fuentes de contenido a nuestro dominio (`default-src 'self'`).
+- `server_tokens off` para ocultar la versión de Nginx.
+- `keepalive_timeout` ajustado.
+- `client_max_body_size` configurado para limitar subidas.
+- Redirección automática de HTTP a HTTPS.
+- Certificado autofirmado para TLS en laboratorio.
+- Cabeceras de seguridad.
+- Páginas de error personalizadas para evitar páginas por defecto.
+- Basic Auth en `/admin`.
+- Rate limiting en `/admin` para reducir fuerza bruta.
 
-Estas cabeceras se establecen en el bloque `server` de `nginx.conf`.  Modifícalas según tus necesidades si permites recursos externos (por ejemplo, fuentes de Google).
+## 5. TLS y certificados
 
-## Basic Authentication & Rate Limiting
+Nginx termina TLS usando los archivos:
 
-The `/admin` location is protected with HTTP Basic Auth.  Credentials
-are stored in the `.htpasswd` file and mounted read‑only into the
-container.  A rate limit of one request per second (with a burst of
-five) is enforced via the `limit_req_zone` directive to mitigate
-brute‑force attacks.
+```text
+certs/server.crt
+certs/server.key
+```
 
-## Log Rotation
+Son certificados autofirmados de laboratorio. En producción se sustituirían por certificados emitidos por una CA confiable, por ejemplo Let’s Encrypt.
 
-Nginx and the backend will generate access and error logs.  To prevent
-these files from consuming all available disk space you should enable
-log rotation.  There are two common approaches:
+Comprobación básica:
 
-1. **Docker logging drivers:** In `docker-compose.yml` you can
-   configure a logging driver with a maximum size and file count.  For
-   example:
+```bash
+curl -k -I https://localhost
+```
 
-   ```yaml
-   services:
-     nginx:
-       logging:
-         driver: json-file
-         options:
-           max-size: "10m"
-           max-file: "3"
-   ```
+## 6. Protección de `/admin`
 
-   This will rotate the container’s JSON log once it reaches 10 MB and
-   keep up to 3 files per container.
+La ruta `/admin` está protegida con HTTP Basic Auth:
 
-2. **logrotate inside the container:** Install `logrotate` in your
-   image and create a cron job to rotate `/var/log/nginx/access.log`
-   and `/var/log/nginx/error.log`.  The configuration might look like:
+```text
+nginx/conf/.htpasswd
+```
 
-   ```
-   /var/log/nginx/*.log {
-       daily
-       missingok
-       rotate 7
-       compress
-       delaycompress
-       notifempty
-       create 0640 nginx adm
-   }
-   ```
+Además se aplica rate limiting mediante `limit_req_zone` y `limit_req`, de forma que los intentos repetidos de acceso se reducen.
 
-   This rotates logs daily, keeps seven compressed backups and ensures
-   new files are created with appropriate ownership.
+## 7. Páginas de error personalizadas
 
-Choose the method that best fits your environment.  The Docker driver
-is simpler and works across platforms, while logrotate gives more
-control over compression and scheduling.
+Los errores `403`, `404` y `50x` usan páginas HTML propias ubicadas en:
+
+```text
+nginx/errors/
+```
+
+Esto evita mostrar firmas o páginas por defecto del servidor.
+
+## 8. SFTP y permisos
+
+El servicio SFTP comparte volumen con Nginx:
+
+```text
+static_content
+```
+
+El volumen se monta en:
+
+```text
+Nginx: /usr/share/nginx/html
+SFTP:  /home/sftpuser/upload
+```
+
+La configuración del usuario SFTP alinea UID/GID con Nginx:
+
+```text
+sftpuser:password:101:101:upload
+```
+
+Esto evita usar `chmod 777`. La idea es que los archivos subidos queden con propietario/grupo compatible con el usuario de Nginx y puedan ser servidos inmediatamente.
+
+Comprobaciones recomendadas:
+
+```bash
+docker run --rm nginx:alpine id nginx
+docker compose exec sftp id sftpuser
+```
+
+Ambos deben mostrar UID/GID compatibles.
+
+## 9. Límites de recursos
+
+Se aplican límites a los servicios más sensibles:
+
+| Servicio | CPU | Memoria |
+|---|---:|---:|
+| `backend` | `0.5` | `512m` |
+| `db` | `0.5` | `512m` |
+
+Estos límites evitan que un proceso consuma todos los recursos del equipo. Los valores pueden ajustarse si durante las pruebas con `docker stats` se detectan reinicios, OOM o alto consumo sostenido.
+
+## 10. Healthchecks
+
+Los healthchecks permiten saber si un servicio está listo:
+
+- `db`: usa `mysqladmin ping`.
+- `backend`: comprueba `/api/message`.
+- `nginx`: comprueba que responde en local.
+- `sftp`: comprueba que `sshd` está activo.
+
+El backend espera a que la base de datos esté saludable antes de arrancar completamente.
+
+## 11. Rotación de logs
+
+Para evitar crecimiento indefinido de logs se configura el driver `json-file`:
+
+```yaml
+logging:
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+Con esto Docker conserva hasta tres archivos de 10 MB por contenedor.
+
+## 12. Comandos de administración
+
+Ver contenedores:
+
+```bash
+docker compose ps
+```
+
+Ver logs:
+
+```bash
+docker compose logs nginx
+```
+
+Entrar en un contenedor:
+
+```bash
+docker compose exec backend sh
+```
+
+Ver consumo:
+
+```bash
+docker stats
+```
+
+Reiniciar un servicio:
+
+```bash
+docker compose restart nginx
+```
+
+Parar todo:
+
+```bash
+docker compose down
+```
+
+## 13. Recomendaciones de producción
+
+Este proyecto está planteado para laboratorio. Para producción habría que:
+
+- Usar certificados reales.
+- Guardar secretos en variables protegidas o Docker secrets.
+- No versionar claves privadas.
+- Cambiar credenciales de laboratorio.
+- Usar imágenes fijadas por versión exacta.
+- Activar escaneo de vulnerabilidades.
+- Separar logs y métricas en una solución externa.

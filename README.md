@@ -1,31 +1,22 @@
 # docker-secure-deployment
 
-Proyecto de despliegue seguro multi-tier con Docker Compose.  
-Incluye frontend React, backend Java/Spring Boot, base de datos MySQL, proxy inverso Nginx y servicio SFTP para gestión de contenidos.
+Proyecto de despliegue seguro multi-tier con Docker Compose.
 
----
-
-## Objetivo del proyecto
-
-El objetivo es desplegar una aplicación web separada por capas, segura y administrable.  
-La arquitectura evita accesos directos al backend, centraliza el tráfico externo en Nginx y aplica buenas prácticas como redes internas, usuarios no root, límites de recursos, healthchecks y gestión segura de permisos.
+El objetivo es levantar una aplicación web separada por capas, con Nginx como único punto de entrada, backend protegido en una red interna, base de datos persistente y un servicio SFTP independiente para gestionar contenido estático.
 
 ---
 
 ## Arquitectura
 
-Servicios principales:
-
 | Servicio | Función |
 |---|---|
-| `frontend` | Interfaz React de la aplicación. |
-| `backend` | Servidor Java/Spring Boot con la API. |
-| `db` | Base de datos MySQL con volumen persistente e inicialización mediante `init.sql`. |
-| `nginx` | Proxy inverso, punto único de entrada, HTTPS y protección de rutas. |
-| `sftp` | Servicio de subida segura de archivos al volumen compartido con Nginx. |
+| `frontend` | Aplicación React. Se construye con Dockerfile multi-stage y genera contenido estático. |
+| `backend` | Aplicación Java/Spring Boot. Expone la API solo dentro de la red interna. |
+| `db` | MySQL con volumen persistente e inicialización automática mediante `init.sql`. |
+| `nginx` | Reverse proxy, terminación TLS, redirección HTTP a HTTPS y protección de `/admin`. |
+| `sftp` | Servicio de gestión de archivos para subir contenido al volumen servido por Nginx. |
 
-Nginx es el único servicio expuesto para el tráfico web.  
-El backend y la base de datos quedan protegidos dentro de redes internas de Docker.
+Nginx es el único servicio publicado hacia el exterior mediante los puertos `80` y `443`. El backend no publica el puerto `8080`, por lo que no se puede acceder a él directamente desde fuera del entorno Docker.
 
 ---
 
@@ -46,25 +37,30 @@ docker-secure-deployment/
 
 ---
 
-## Medidas de seguridad aplicadas
+## Medidas principales de seguridad
 
-- Nginx como único punto de entrada externo.
-- Redirección automática de HTTP a HTTPS.
-- Certificados autofirmados para el entorno de laboratorio.
-- Ocultación de la versión de Nginx con `server_tokens off`.
-- Páginas de error personalizadas para evitar firmas por defecto.
-- Protección de `/admin` con Basic Auth.
-- Rate limiting para reducir ataques de fuerza bruta.
-- Backend sin puerto público expuesto.
-- Redes separadas para frontend, backend y SFTP.
+- Separación de redes: `frontend_net`, `backend_net` y `sftp_net`.
+- Dockerfiles multi-stage para frontend y backend.
 - Usuarios no root en los contenedores personalizados.
-- Límites de CPU y memoria para backend y base de datos.
-- Healthchecks para comprobar el estado de los servicios.
-- SFTP con UID/GID alineado con Nginx, evitando usar `chmod 777`.
+- Nginx como único punto de entrada externo.
+- HTTPS mediante certificados autofirmados para entorno de laboratorio.
+- Redirección automática de HTTP a HTTPS.
+- Ocultación de la versión de Nginx con `server_tokens off`.
+- Configuración de `keepalive_timeout` y `client_max_body_size`.
+- Páginas de error personalizadas para `403`, `404` y errores `50x`.
+- Ruta `/admin` protegida con HTTP Basic Auth.
+- Rate limiting en `/admin` para reducir intentos de fuerza bruta.
+- Backend sin puerto público expuesto.
+- Base de datos aislada dentro de la red interna.
+- SFTP con chroot y volumen compartido con Nginx.
+- UID/GID alineado entre SFTP y Nginx para evitar permisos inseguros como `chmod 777`.
+- Límites de CPU y memoria en backend y base de datos.
+- Healthchecks para controlar el arranque y estado de los servicios.
+- Documentación del incidente simulado de fuga de `server.key`.
 
 ---
 
-## Despliegue
+## Puesta en marcha
 
 Construir los contenedores:
 
@@ -78,38 +74,25 @@ Levantar el entorno:
 docker compose up -d
 ```
 
-Comprobar los servicios:
+Comprobar el estado de los servicios:
 
 ```bash
 docker compose ps
 ```
 
-Detener el entorno:
-
-```bash
-docker compose down
-```
-
-Eliminar también los volúmenes:
-
-```bash
-docker compose down -v
-```
-
----
-
-## Acceso a la aplicación
-
-Aplicación web:
+La aplicación estará disponible en:
 
 ```text
 https://localhost
 ```
 
-Al usar certificados autofirmados, el navegador puede mostrar una advertencia de seguridad.  
-Es normal en este entorno de pruebas.
+Al usar certificados autofirmados, el navegador puede mostrar una advertencia de seguridad. Es normal en este entorno de pruebas.
 
-Zona de administración:
+---
+
+## Zona de administración
+
+La zona protegida está en:
 
 ```text
 https://localhost/admin
@@ -139,7 +122,23 @@ Usuario: sftpuser
 Contraseña: password
 ```
 
-Los archivos subidos se guardan en el volumen compartido con Nginx y pueden servirse como contenido estático.
+Los archivos subidos al directorio `upload` se almacenan en el volumen compartido y pueden ser servidos por Nginx como contenido estático.
+
+---
+
+## Limpieza del entorno
+
+Detener los contenedores:
+
+```bash
+docker compose down
+```
+
+Eliminar también los volúmenes:
+
+```bash
+docker compose down -v
+```
 
 ---
 
@@ -159,16 +158,14 @@ Medidas tomadas:
 
 ## Git Flow
 
-El proyecto se desarrolló siguiendo un flujo Git Flow con ramas:
+El proyecto se desarrolló siguiendo un flujo Git Flow con ramas principales y auxiliares:
 
 ```text
 main
 develop
-feature/healthchecks
-feature/sftp
-feature/documentacion
-hotfix/certificados
-release/1.0.0
+feature/*
+release/*
+hotfix/*
 ```
 
 Comando usado para comprobar el historial:
@@ -177,24 +174,40 @@ Comando usado para comprobar el historial:
 git log --graph --oneline --decorate --all
 ```
 
-Captura del historial Git Flow:
+La captura del historial debe guardarse en:
 
-```markdown
-![Git Flow](docs/images/git-flow.png)
+```text
+docs/images/git-flow.png
 ```
 
 ---
 
 ## Documentación
 
-La documentación técnica está en la carpeta `docs/`:
+La documentación principal está en la carpeta `docs/`:
 
 | Archivo | Contenido |
 |---|---|
-| `deployment_manual.md` | Instrucciones de despliegue. |
-| `administration_manual.md` | Medidas de seguridad, hardening y recursos. |
-| `critical_thinking.md` | Respuestas a los retos de seguridad. |
-| `git_flow_report.md` | Evidencia del flujo Git utilizado. |
+| `deployment_manual.md` | Pasos para construir, arrancar, probar y detener el entorno. |
+| `administration_manual.md` | Seguridad, redes, hardening, recursos, logs y operación básica. |
+| `critical_thinking.md` | Respuestas a los retos de bypass, leaked secret, UID/GID y benchmarking. |
+| `git_flow_report.md` | Explicación del flujo Git utilizado y evidencia del historial. |
+| `evidence_checklist.md` | Lista de capturas recomendadas para demostrar el funcionamiento. |
+
+---
+
+## Evidencias recomendadas
+
+Para completar la entrega, se recomienda incluir capturas en `docs/images/` mostrando:
+
+- `docker compose ps` con todos los servicios levantados.
+- Acceso a `https://localhost`.
+- Redirección desde HTTP a HTTPS.
+- Acceso protegido a `/admin`.
+- Conexión SFTP al puerto `2222`.
+- Subida de archivo por SFTP y visualización desde Nginx.
+- `docker stats` durante pruebas de carga o recargas del navegador.
+- `git log --graph --oneline --decorate --all`.
 
 ---
 
