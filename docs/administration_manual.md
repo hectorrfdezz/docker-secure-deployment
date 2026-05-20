@@ -55,6 +55,8 @@ services that depend on it (such as Nginx) will wait until it becomes
 healthy before routing traffic.  The database retains its built‑in
 healthcheck via `mysqladmin ping`.
 
+In addition, esta revisión añade *healthchecks* para Nginx y SFTP.  Nginx ejecuta un comando que solicita la página raíz (`wget -qO- http://localhost`) y falla si no hay respuesta; el servicio SFTP comprueba que el proceso `sshd` está activo mediante `ps`.  Estas comprobaciones permiten que Docker reinicie estos servicios automáticamente en caso de fallo y proporcionan una detección temprana de errores.
+
 ## SSL/TLS Termination
 
 Self‑signed certificates reside in the `certs/` directory and are
@@ -63,6 +65,18 @@ mounted into the Nginx container at `/etc/nginx/certs`.  The
 certificates and redirect all HTTP traffic to HTTPS.  In a
 production environment you would replace these files with certificates
 issued by a trusted Certificate Authority (e.g. via Let’s Encrypt).
+
+### Cabeceras de seguridad
+
+Además de TLS y redirección, se han añadido varias cabeceras HTTP para fortalecer la seguridad:
+
+- **Strict-Transport-Security** obliga al navegador a usar HTTPS durante un año.
+- **X-Content-Type-Options** evita que el navegador interprete incorrectamente los tipos MIME.
+- **X-Frame-Options** impide que el sitio sea cargado en iframes de otros dominios.
+- **X-XSS-Protection** activa la protección contra ataques de cross‑site scripting heredada.
+- **Content-Security-Policy** restringe las fuentes de contenido a nuestro dominio (`default-src 'self'`).
+
+Estas cabeceras se establecen en el bloque `server` de `nginx.conf`.  Modifícalas según tus necesidades si permites recursos externos (por ejemplo, fuentes de Google).
 
 ## Basic Authentication & Rate Limiting
 
